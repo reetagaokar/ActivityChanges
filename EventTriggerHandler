@@ -1,0 +1,84 @@
+public with sharing class EventTriggerHandler {
+    //Method gives the date of Latest Sales Event for Inside Sales Accounts
+    Public Static void UpdateLatestEventDateSales (List<Event> newEvntList,Map<Id, Event> oldEvntMap){
+        List<Account> accUpdateList = new List<Account>();
+        set<Id> tempaccIdSet = new Set<Id>();
+        set<Id> accIdSet = new Set<Id>();
+        set<Id> ownerIdSet = new Set<Id>();
+        Map<id, User> ownerMap= new Map<id, User>();
+        Map <id, account> AccountActivityMap = new Map <id, account>();
+        for (Event evt:newEvntList){
+            ownerIdSet.add(evt.OwnerId);
+            tempaccIdSet.add(evt.AccountId);
+        }
+
+        if (ownerIdSet!= null && ownerIdSet.size()>0){
+            ownerMap = new Map<id, User>([ Select id, Profile.Name From User where Id IN: ownerIdSet]);
+        }
+        
+        AccountActivityMap = new Map <id, account>([Select id, Latest_Sales_Event_Date_for_IS_Rank__c from Account where
+                                                    id in :tempaccIdSet 
+                                                    And owner.profile.name = 'Inside Sales'
+                                                    And (RecordType.DeveloperName = 'Customer' OR RecordType.DeveloperName = 'Customer_Location')
+                                                    AND Status__c = 'Active' AND win_id__c != null]);
+        
+        for (Event evt:newEvntList){
+            Boolean SalesOwnedActivity = ownerMap.get(evt.OwnerId).Profile.Name != 'Sales Operations' && ownerMap.get(evt.OwnerId).Profile.Name != 'System Administrator';
+            Boolean AccountRelatedActivity = (evt.WhatId != null && (evt.Whatid.getsObjectType() == Account.sObjectType || evt.Whatid.getsObjectType() == Opportunity.sObjectType))||(evt.WhoId != null && evt.Whoid.getsObjectType() == Contact.sObjectType);
+            Boolean ActivityDateChanged = oldEvntMap != null && evt.ActivityDate != oldEvntMap.get(evt.id).ActivityDate;          
+            Boolean ISAMNewAccount = AccountActivityMap != null && AccountActivityMap.size() > 0 && AccountActivityMap.containskey(evt.AccountId);
+            
+            system.debug('SalesOwnedActivity'+SalesOwnedActivity);
+            system.debug('ActivityDateChanged'+ActivityDateChanged);
+            
+            if(ISAMNewAccount && AccountRelatedActivity && SalesOwnedActivity && (oldEvntMap == null || ActivityDateChanged)){
+                   accIdSet.add(evt.AccountId);
+               }
+              
+        }
+        
+        System.debug('accIdSet.size'+accIdSet.size());
+        
+        if (accIdSet != null && accIdSet.size() >0){
+            Map<Id, Date> MaxActivityDateMap = new Map<Id, Date>();
+            
+            List<AggregateResult> AggregateResultList = [Select accountId, Max(Event_Start_Date__c)maxActivityDate From Event 
+                                                         where accountId in:accIdSet
+                                                         And (Owner.Profile.Name != 'Sales Operations' AND Owner.Profile.Name != 'System Administrator') 
+                                                         And (Who.Type='Contact' Or What.Type IN ('Account', 'Opportunity'))
+                                                         And account.owner.profile.name = 'Inside Sales'
+                                                         And (account.RecordType.DeveloperName = 'Customer' OR account.RecordType.DeveloperName = 'Customer_Location')
+                                                         AND account.Status__c = 'Active' AND account.win_id__c != null
+                                                         Group By accountId];
+            
+            if(AggregateResultList != null && AggregateResultList.size() > 0){ 
+                for(AggregateResult aggr:AggregateResultList){
+                        MaxActivityDateMap.put((id)aggr.get('accountId'),(date)aggr.get('maxActivityDate'));   
+                }
+            }
+            
+            for (Id accId:accIdSet){
+                if (MaxActivityDateMap != null && MaxActivityDateMap.size() > 0 && MaxActivityDateMap.containskey(accId) 
+                    && MaxActivityDateMap.get(accId) != AccountActivityMap.get(accId).Latest_Sales_Event_Date_for_IS_Rank__c){
+                    Account a = new Account();
+               		a.id = accId;
+                    a.Latest_Sales_Event_Date_for_IS_Rank__c = MaxActivityDateMap.get(accId);
+                    accUpdateList.add(a);
+                }else if (MaxActivityDateMap.size() == 0
+                          || (MaxActivityDateMap != null && MaxActivityDateMap.size() > 0 && !MaxActivityDateMap.containskey(accId))
+                          && AccountActivityMap.get(accId).Latest_Sales_Event_Date_for_IS_Rank__c != null){
+                              Account a = new Account();
+                              a.id = accId;
+                              a.Latest_Sales_Event_Date_for_IS_Rank__c = null;
+                              accUpdateList.add(a);
+                          }      
+            }
+            
+            if(accUpdateList != null && accUpdateList.size()>0)
+            {
+                update accUpdateList;
+            }
+            
+        }        
+    }
+}

@@ -1,0 +1,15 @@
+trigger EventTrigger on Event (after insert, after update) {
+
+    if(Trigger.isAfter){
+        if(Trigger.isInsert ){         
+            //Inside sales latest event date for account, contact, opportunity
+            EventTriggerHandler.UpdateLatestEventDateSales(trigger.new,null);
+        }
+        
+        if(Trigger.isUpdate ){            
+            //Inside sales latest event date for account, contact, opportunity
+            EventTriggerHandler.UpdateLatestEventDateSales(trigger.new,trigger.oldMap); 
+        }
+    }
+
+}
